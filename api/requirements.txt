@@ -1,0 +1,43 @@
+# ============================================================
+# FlyPass API — Зависимости Python
+# ============================================================
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# База данных
+sqlalchemy==2.0.30          # ORM
+asyncpg==0.29.0             # Async PostgreSQL драйвер
+alembic==1.13.1             # Миграции БД
+
+# Redis
+redis==5.0.4
+aioredis==2.0.1
+
+# Celery (фоновые задачи)
+celery==5.4.0
+celery[redis]==5.4.0
+
+# YooKassa
+yookassa==3.1.0
+
+# HTTP клиент (для Marzban API)
+httpx==0.27.0
+aiohttp==3.9.5
+
+# Безопасность
+python-jose[cryptography]==3.3.0   # JWT токены
+passlib[bcrypt]==1.7.4             # Хэширование паролей
+cryptography==42.0.7
+
+# Утилиты
+pydantic==2.7.1             # Валидация данных
+pydantic-settings==2.2.1    # Настройки из .env
+python-dotenv==1.0.1        # Загрузка .env
+loguru==0.7.2               # Удобное логирование
+tenacity==8.3.0             # Повторные попытки при ошибках
+
+# QR-коды (для веб-интерфейса)
+qrcode==7.4.2
+pillow==10.3.0

@@ -1,0 +1,152 @@
+# ============================================================
+# FlyPass VPN — Docker Compose
+# Запускает все сервисы одной командой: docker-compose up -d
+# ============================================================
+
+version: '3.9'
+
+services:
+
+  # ── PostgreSQL — основная база данных ──────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: flypass_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME}
+      POSTGRES_USER:     ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # данные хранятся постоянно
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # создаёт схему при первом запуске
+    networks:
+      - flypass_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis — кэш, сессии, rate-limit, очереди задач ────────
+  redis:
+    image: redis:7-alpine
+    container_name: flypass_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - flypass_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend — REST API сервис ──────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: flypass_api
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./api:/app                  # для разработки (hot-reload)
+      - ./web:/app/static/web       # веб-интерфейс пользователя
+    networks:
+      - flypass_net
+    expose:
+      - "8000"
+
+  # ── Telegram Bot ────────────────────────────────────────────
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: flypass_bot
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - ./bot:/app
+    networks:
+      - flypass_net
+
+  # ── Celery Worker — фоновые задачи ─────────────────────────
+  # Проверяет истечение подписок, шлёт уведомления, мониторит серверы
+  celery:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: flypass_celery
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A tasks worker --loglevel=info --concurrency=4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+    networks:
+      - flypass_net
+
+  # ── Celery Beat — планировщик задач (cron) ─────────────────
+  celery_beat:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: flypass_celery_beat
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A tasks beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      - celery
+    volumes:
+      - ./api:/app
+    networks:
+      - flypass_net
+
+  # ── Caddy — reverse proxy с автоматическим SSL ─────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: flypass_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./web:/srv/web   # статика веб-интерфейса
+    networks:
+      - flypass_net
+    depends_on:
+      - api
+
+# ── Постоянные тома данных ────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+# ── Изолированная сеть всех сервисов ─────────────────────────
+networks:
+  flypass_net:
+    driver: bridge

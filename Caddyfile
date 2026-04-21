@@ -1,0 +1,71 @@
+# ============================================================
+# FlyPass — Конфигурация Caddy (reverse proxy + авто SSL)
+# Caddy автоматически получает SSL сертификаты от Let's Encrypt
+# ============================================================
+
+# ── Главный API (FastAPI) ─────────────────────────────────────
+flypass.ru {
+    # Все запросы к API
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    # Вебхуки YooKassa (отдельный лог для отладки)
+    handle /api/v1/payments/webhook {
+        reverse_proxy api:8000
+        log {
+            output file /var/log/caddy/webhook.log
+        }
+    }
+
+    # Статика (веб-интерфейс пользователя — если открывают без sub-токена)
+    handle /static/* {
+        root * /srv/web
+        file_server
+    }
+
+    # Редирект www → без www
+    @www host www.flypass.ru
+    redir @www https://flypass.ru{uri} permanent
+
+    # Заголовки безопасности
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy strict-origin-when-cross-origin
+        # Убираем Server заголовок (не показываем что используем Caddy)
+        -Server
+    }
+}
+
+# ── Sub-ссылки пользователей ──────────────────────────────────
+# Запросы вида sub.flypass.ru/s/TOKEN
+sub.flypass.ru {
+    handle /s/* {
+        reverse_proxy api:8000
+    }
+    # Если токен не указан — редирект в бот
+    handle {
+        redir https://t.me/FlyPassBot permanent
+    }
+}
+
+# ── Панель Marzban ────────────────────────────────────────────
+# ВАЖНО: панель закрыта от публичного доступа!
+# Доступна только через VPN или по прямому IP с авторизацией
+panel.flypass.ru {
+    # Разрешить только с определённых IP (твой IP и серверные IP)
+    @blocked {
+        not remote_ip 1.2.3.4 5.6.7.8   # замени на свои IP
+    }
+    respond @blocked "403 Forbidden" 403
+
+    reverse_proxy localhost:7657    # Marzban запущен локально на этом порту
+
+    # Усиленные заголовки для панели
+    header {
+        X-Frame-Options DENY
+        -Server
+    }
+}
